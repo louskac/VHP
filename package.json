@@ -1,0 +1,66 @@
+{
+  "name": "@nocena/vhp",
+  "version": "0.1.0",
+  "description": "Verified Human Protocol - Web3 CAPTCHA alternative",
+  "author": "Nocena Team",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "next dev",
+    "dev:https": "node server.js",
+    "build": "next build",
+    "build:package": "tsc -p tsconfig.build.json && cp src/lib/*.ts dist/",
+    "lint": "next lint",
+    "prepare": "echo 'Skipping prepare script for now'",
+    "test": "echo 'No tests yet'"
+  },
+  "dependencies": {
+    "@lens-chain/sdk": "^1.0.3",
+    "@lens-chain/storage-client": "^1.0.4",
+    "@worldcoin/idkit": "^2.1.0",
+    "face-api.js": "^0.22.2",
+    "framer-motion": "^11.0.0",
+    "react-webcam": "^7.2.0",
+    "viem": "^2.29.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.2.47",
+    "@types/react-dom": "^18.2.18",
+    "autoprefixer": "^10.4.17",
+    "eslint": "^8.56.0",
+    "eslint-config-next": "^14.1.0",
+    "next": "^14.1.0",
+    "postcss": "^8.4.33",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tailwindcss": "^3.4.1",
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nocena/vhp"
+  },
+  "keywords": [
+    "web3",
+    "captcha",
+    "verification",
+    "human-verification",
+    "nocena",
+    "blockchain"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
