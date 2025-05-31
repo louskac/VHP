@@ -7,6 +7,7 @@ import ThematicContainer from '../ui/ThematicContainer';
 import CompleteChallengeScreen from './CompleteChallenge';
 
 interface ChallengeModeProps {
+  userId: string; // Add userId prop
   onSuccess: (token: string) => void;
   onFailed: (error: string) => void;
   apiEndpoint: string;
@@ -23,6 +24,7 @@ interface Challenge {
 }
 
 const ChallengeMode: React.FC<ChallengeModeProps> = ({
+  userId, // Destructure userId
   onSuccess,
   onFailed,
   apiEndpoint,
@@ -115,8 +117,8 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
     setStage('completing');
   };
 
-  // Updated to handle both video and photo
-  const handleChallengeCompletion = async (data: { video: Blob; photo: Blob }) => {
+  // Updated to handle both video and photo with verification result
+  const handleChallengeCompletion = async (data: { video: Blob; photo: Blob; verificationResult?: any }) => {
     setStage('processing');
 
     try {
@@ -126,8 +128,10 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
       formData.append('photo', data.photo, 'verification-selfie.jpg');
       formData.append('challengeData', JSON.stringify({
         ...challenge,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        verificationResult: data.verificationResult // Include verification results
       }));
+      formData.append('userId', userId); // Include userId for backend processing
 
       const response = await fetch(apiEndpoint, {
         method: 'POST',
@@ -291,6 +295,7 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
       {stage === 'completing' && (
         <CompleteChallengeScreen 
           challenge={challenge}
+          userId={userId} // Pass userId prop
           onComplete={handleChallengeCompletion}
           onBack={() => setStage('challenge')}
         />

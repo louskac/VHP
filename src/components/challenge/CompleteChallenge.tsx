@@ -17,7 +17,8 @@ interface Challenge {
 
 interface CompleteChallengeScreenProps {
   challenge: Challenge;
-  onComplete: (data: { video: Blob; photo: Blob }) => void;
+  userId: string;
+  onComplete: (data: { video: Blob; photo: Blob; verificationResult?: any }) => void;
   onBack: () => void;
 }
 
@@ -25,6 +26,7 @@ type Stage = 'ready' | 'countdown' | 'recording' | 'review' | 'selfie';
 
 const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
   challenge,
+  userId,
   onComplete,
   onBack,
 }) => {
@@ -33,11 +35,13 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
   const [recordingTime, setRecordingTime] = useState(0);
   const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
   const [videoUrl, setVideoUrl] = useState<string>('');
+  const [actualRecordingDuration, setActualRecordingDuration] = useState(0);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const recordingStartTimeRef = useRef<number>(0);
 
   // Countdown effect
   useEffect(() => {
@@ -59,9 +63,13 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
   // Recording timer effect
   useEffect(() => {
     if (stage === 'recording') {
+      recordingStartTimeRef.current = Date.now();
+      setRecordingTime(0);
+      
       const timer = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
-      }, 1000);
+        const elapsed = Math.floor((Date.now() - recordingStartTimeRef.current) / 1000);
+        setRecordingTime(elapsed);
+      }, 100);
 
       return () => clearInterval(timer);
     }
@@ -81,7 +89,11 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user' },
+        video: { 
+          facingMode: 'user',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
         audio: true
       });
       
@@ -91,9 +103,10 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
         videoRef.current.srcObject = stream;
       }
 
-      // Start recording
       const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'video/webm;codecs=vp9'
+        mimeType: 'video/webm;codecs=vp9,opus',
+        videoBitsPerSecond: 2500000,
+        audioBitsPerSecond: 128000
       });
       
       mediaRecorderRef.current = mediaRecorder;
@@ -102,17 +115,37 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           chunksRef.current.push(event.data);
+          console.log(`📊 Video chunk received: ${event.data.size} bytes`);
         }
       };
 
       mediaRecorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+        const actualDuration = (Date.now() - recordingStartTimeRef.current) / 1000;
+        setActualRecordingDuration(actualDuration);
+        
+        console.log(`🎬 Recording stopped. Total chunks: ${chunksRef.current.length}`);
+        console.log(`⏱️ Actual recording duration: ${actualDuration.toFixed(1)}s`);
+        console.log(`⏱️ Timer showed: ${recordingTime}s`);
+        
+        const blob = new Blob(chunksRef.current, { 
+          type: 'video/webm;codecs=vp9,opus' 
+        });
+        
+        console.log(`📦 Final video blob:`, {
+          size: `${(blob.size / 1024 / 1024).toFixed(2)} MB`,
+          type: blob.type,
+          actualDuration: `${actualDuration.toFixed(1)}s`,
+          timerDuration: `${recordingTime}s`
+        });
+        
         setVideoBlob(blob);
         setVideoUrl(URL.createObjectURL(blob));
         setStage('review');
       };
 
-      mediaRecorder.start();
+      mediaRecorder.start(1000);
+      console.log('🔴 Recording started with 1s timeslice');
+      
     } catch (error) {
       console.error('Error accessing camera:', error);
       alert('Unable to access camera. Please check permissions.');
@@ -129,6 +162,8 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
 
   const stopRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      const actualDuration = (Date.now() - recordingStartTimeRef.current) / 1000;
+      console.log(`🛑 Stopping recording after ${actualDuration.toFixed(1)}s`);
       mediaRecorderRef.current.stop();
     }
     stopCamera();
@@ -140,7 +175,6 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
 
   const handleSubmit = () => {
     if (videoBlob) {
-      // After submitting the challenge video, go to selfie verification
       setStage('selfie');
     }
   };
@@ -149,11 +183,12 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
     setVideoBlob(null);
     setVideoUrl('');
     setRecordingTime(0);
+    setActualRecordingDuration(0);
+    recordingStartTimeRef.current = 0;
     setStage('ready');
   };
 
-  const handleSelfieComplete = (data: { video: Blob; photo: Blob }) => {
-    // Pass the combined data to the parent
+  const handleSelfieComplete = (data: { video: Blob; photo: Blob; verificationResult?: any }) => {
     onComplete(data);
   };
 
@@ -162,6 +197,8 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  const canSubmit = actualRecordingDuration >= 3;
 
   return (
     <div className="flex flex-col">
@@ -251,15 +288,20 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
           </div>
 
           {/* Recording Controls */}
-          <div className="flex justify-center">
+          <div className="flex flex-col items-center">
             <button
               onClick={stopRecording}
               className="bg-red-600 hover:bg-red-700 text-white rounded-full p-4 transition-colors"
+              title="Stop recording"
             >
               <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
                 <rect x="6" y="6" width="12" height="12" rx="2" />
               </svg>
             </button>
+            
+            <p className="text-xs text-gray-400 mt-2">
+              Recording: {recordingTime}s
+            </p>
           </div>
         </div>
       )}
@@ -277,14 +319,37 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
           </div>
 
           {/* Review Message */}
-          <div className="bg-green-900/20 rounded-lg p-3 mb-6 border border-green-800/30">
+          <div className={`rounded-lg p-3 mb-6 border ${
+            canSubmit 
+              ? 'bg-green-900/20 border-green-800/30' 
+              : 'bg-red-900/20 border-red-800/30'
+          }`}>
             <div className="flex items-start gap-2">
-              <svg className="w-4 h-4 text-green-400 mt-0.5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
+              <svg className={`w-4 h-4 mt-0.5 flex-shrink-0 ${
+                canSubmit ? 'text-green-400' : 'text-red-400'
+              }`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                {canSubmit ? (
+                  <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
+                ) : (
+                  <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
+                )}
               </svg>
-              <p className="text-xs text-green-300">
-                Review your recording above. If you're happy with it, submit to complete the challenge!
-              </p>
+              <div>
+                <p className={`text-xs mb-1 ${
+                  canSubmit ? 'text-green-300' : 'text-red-300'
+                }`}>
+                  {canSubmit 
+                    ? `Perfect! Your ${actualRecordingDuration.toFixed(1)}s recording meets the requirements.`
+                    : `Recording too short: ${actualRecordingDuration.toFixed(1)}s (minimum 3s required).`
+                  }
+                </p>
+                <p className="text-xs text-gray-400">
+                  {canSubmit 
+                    ? 'Review your recording above. If you\'re happy with it, submit to complete the challenge!'
+                    : 'Please record again for at least 3 seconds to ensure proper verification.'
+                  }
+                </p>
+              </div>
             </div>
           </div>
 
@@ -298,17 +363,20 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
             </button>
             <PrimaryButton
               onClick={handleSubmit}
-              text="Submit Challenge"
-              className="flex-1"
+              text={canSubmit ? "Submit Challenge" : "Record Again (Too Short)"}
+              className={`flex-1 ${!canSubmit ? 'opacity-50 cursor-not-allowed' : ''}`}
+              disabled={!canSubmit}
             />
           </div>
         </div>
       )}
+
       {/* Selfie Verification Stage */}
       {stage === 'selfie' && videoBlob && (
         <VerificationSelfieScreen
           challenge={challenge}
           videoBlob={videoBlob}
+          userId={userId}
           onComplete={handleSelfieComplete}
           onBack={() => setStage('review')}
         />

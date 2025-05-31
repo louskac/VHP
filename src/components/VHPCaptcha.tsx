@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import ThematicContainer from './ui/ThematicContainer';
 import ChallengeMode from './challenge/ChallengeMode';
@@ -14,6 +14,7 @@ export interface VHPCaptchaProps {
   className?: string;
   isOpen?: boolean;
   onClose?: () => void;
+  userId?: string; // Optional userId prop
 }
 
 const VHPCaptcha: React.FC<VHPCaptchaProps> = ({
@@ -23,9 +24,20 @@ const VHPCaptcha: React.FC<VHPCaptchaProps> = ({
   className = '',
   isOpen = true,
   onClose,
+  userId, // Optional userId
 }) => {
   const [mode, setMode] = useState<'initial' | 'challenge' | 'nocena' | 'world' | 'success' | 'failed'>('initial');
   const [verificationToken, setVerificationToken] = useState<string | null>(null);
+  const [anonymousUserId, setAnonymousUserId] = useState<string>('');
+
+  // Generate anonymous user ID for captcha verification if no userId provided
+  useEffect(() => {
+    if (!userId) {
+      // Generate a temporary anonymous user ID for verification purposes
+      const tempUserId = `anonymous_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      setAnonymousUserId(tempUserId);
+    }
+  }, [userId]);
 
   const handleVerificationSuccess = (token: string) => {
     setVerificationToken(token);
@@ -46,6 +58,9 @@ const VHPCaptcha: React.FC<VHPCaptchaProps> = ({
   const resetState = () => {
     setMode('initial');
   };
+
+  // Use provided userId or generated anonymous one
+  const currentUserId = userId || anonymousUserId;
 
   if (!isOpen) return null;
 
@@ -126,13 +141,24 @@ const VHPCaptcha: React.FC<VHPCaptchaProps> = ({
                   <span className="text-base font-medium">Challenge</span>
                 </ThematicContainer>
               </div>
+
+              {/* Debug info for development (remove in production) */}
+              {process.env.NODE_ENV === 'development' && (
+                <div className="mt-4 bg-gray-800/30 rounded-lg p-2 text-xs">
+                  <p className="text-gray-400">
+                    User ID: {currentUserId.substring(0, 20)}...
+                    {!userId && " (anonymous)"}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
           {/* Challenge Mode */}
-          {mode === 'challenge' && (
+          {mode === 'challenge' && currentUserId && (
             <div className="relative">
               <ChallengeMode
+                userId={currentUserId} // Pass userId (real or anonymous)
                 onSuccess={handleVerificationSuccess}
                 onFailed={handleVerificationFailed}
                 apiEndpoint={apiEndpoint}
@@ -201,6 +227,14 @@ const VHPCaptcha: React.FC<VHPCaptchaProps> = ({
                 Try Again
               </button>
             </motion.div>
+          )}
+
+          {/* Loading state while generating anonymous ID */}
+          {mode === 'challenge' && !currentUserId && (
+            <div className="flex flex-col items-center justify-center py-12">
+              <div className="w-8 h-8 border-4 border-pink-500 border-t-transparent rounded-full animate-spin mb-4" />
+              <p className="text-gray-300 text-sm">Preparing verification...</p>
+            </div>
           )}
         </ThematicContainer>
       </motion.div>

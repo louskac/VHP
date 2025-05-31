@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
 import PrimaryButton from '../ui/PrimaryButton';
 import ThematicContainer from '../ui/ThematicContainer';
+import { SimpleVerificationService, VerificationStep } from '../../lib/verification/simpleVerificationService';
 
 interface Challenge {
   title: string;
@@ -18,7 +19,8 @@ interface VerificationReviewScreenProps {
   challenge: Challenge;
   videoBlob: Blob;
   photoBlob: Blob;
-  onComplete: (data: { video: Blob; photo: Blob }) => void;
+  userId: string;
+  onComplete: (data: { video: Blob; photo: Blob; verificationResult: any }) => void;
   onBack: () => void;
 }
 
@@ -26,13 +28,16 @@ const VerificationReviewScreen: React.FC<VerificationReviewScreenProps> = ({
   challenge,
   videoBlob,
   photoBlob,
+  userId,
   onComplete,
   onBack,
 }) => {
   const [videoUrl, setVideoUrl] = useState<string>('');
   const [photoUrl, setPhotoUrl] = useState<string>('');
-  const [verificationStage, setVerificationStage] = useState<'starting' | 'verifying' | 'complete'>('starting');
-  const [progress, setProgress] = useState(0);
+  const [verificationStage, setVerificationStage] = useState<'ready' | 'verifying' | 'complete' | 'failed'>('ready');
+  const [verificationSteps, setVerificationSteps] = useState<VerificationStep[]>([]);
+  const [verificationResult, setVerificationResult] = useState<any>(null);
+  const [currentStepMessage, setCurrentStepMessage] = useState('Ready to verify submission');
 
   // Create object URLs for media
   useEffect(() => {
@@ -42,54 +47,129 @@ const VerificationReviewScreen: React.FC<VerificationReviewScreenProps> = ({
     setVideoUrl(vUrl);
     setPhotoUrl(pUrl);
 
-    // Start verification process after a short delay
-    const timer = setTimeout(() => {
-      startVerificationProcess();
-    }, 1000);
-
     return () => {
       // Clean up object URLs
       URL.revokeObjectURL(vUrl);
       URL.revokeObjectURL(pUrl);
-      clearTimeout(timer);
     };
   }, [videoBlob, photoBlob]);
 
-  const startVerificationProcess = () => {
+  const startVerification = async () => {
     setVerificationStage('verifying');
     
-    // Simulate progress over 4 seconds
-    let currentProgress = 0;
-    const interval = setInterval(() => {
-      currentProgress += 25;
-      setProgress(currentProgress);
-      
-      if (currentProgress >= 100) {
-        clearInterval(interval);
-        setTimeout(() => {
-          setVerificationStage('complete');
-        }, 500);
-      }
-    }, 1000);
-  };
+    console.group('🔍 VERIFICATION PROCESS STARTED');
+    console.log('Challenge:', challenge.title);
+    console.log('Video:', { size: `${(videoBlob.size / 1024 / 1024).toFixed(2)} MB`, type: videoBlob.type });
+    console.log('Photo:', { size: `${(photoBlob.size / 1024).toFixed(2)} KB`, type: photoBlob.type });
+    console.groupEnd();
+    
+    try {
+      const verificationService = new SimpleVerificationService((steps) => {
+        // Update UI with step progress
+        setVerificationSteps(steps);
+        
+        // Update current step message
+        const runningStep = steps.find(s => s.status === 'running');
+        if (runningStep) {
+          setCurrentStepMessage(runningStep.message);
+        }
+        
+        // Log step completions
+        const completedStep = steps.find(s => s.status === 'completed' && !s.id.includes('logged'));
+        if (completedStep) {
+          console.log(`✅ ${completedStep.name} COMPLETED:`, {
+            confidence: `${Math.round((completedStep.confidence || 0) * 100)}%`,
+            message: completedStep.message
+          });
+          // Mark as logged to prevent duplicate logs
+          completedStep.id += '-logged';
+        }
+        
+        const failedStep = steps.find(s => s.status === 'failed' && !s.id.includes('logged'));
+        if (failedStep) {
+          console.error(`❌ ${failedStep.name} FAILED:`, failedStep.message);
+          // Mark as logged to prevent duplicate logs
+          failedStep.id += '-logged';
+        }
+      });
 
-  const getVerificationMessage = () => {
-    switch (verificationStage) {
-      case 'starting':
-        return 'Ready to verify...';
-      case 'verifying':
-        if (progress <= 25) return 'Checking video quality...';
-        if (progress <= 50) return 'AI analyzing challenge completion...';
-        if (progress <= 75) return 'Verifying human face in selfie...';
-        if (progress <= 100) return 'Matching facial features...';
-        return 'Processing...';
-      case 'complete':
-        return 'All verification checks passed!';
+      console.log('🚀 Starting verification process...');
+      
+      const result = await verificationService.runFullVerification(
+        videoBlob,
+        photoBlob,
+        challenge.description
+      );
+
+      console.group('📊 VERIFICATION RESULTS');
+      console.log('Overall result:', result.passed ? '✅ PASSED' : '❌ FAILED');
+      console.log('Overall confidence:', `${Math.round(result.overallConfidence * 100)}%`);
+      console.groupEnd();
+
+      setVerificationResult(result);
+      
+      if (result.passed) {
+        setVerificationStage('complete');
+        setCurrentStepMessage('All verification checks passed!');
+      } else {
+        setVerificationStage('failed');
+        setCurrentStepMessage('Verification failed. Please try again.');
+      }
+    } catch (error) {
+      console.error('💥 VERIFICATION ERROR:', error);
+      setVerificationStage('failed');
+      setCurrentStepMessage('Verification process encountered an error.');
     }
   };
 
   const handleSubmit = () => {
-    onComplete({ video: videoBlob, photo: photoBlob });
+    onComplete({ 
+      video: videoBlob, 
+      photo: photoBlob,
+      verificationResult
+    });
+  };
+
+  const getStepStatusIcon = (step: VerificationStep) => {
+    switch (step.status) {
+      case 'completed':
+        return (
+          <div className="w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
+            <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+              <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+        );
+      case 'running':
+        return <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />;
+      case 'failed':
+        return (
+          <div className="w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
+            <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+              <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+        );
+      default:
+        return <div className="w-4 h-4 bg-gray-500 rounded-full" />;
+    }
+  };
+
+  const getOverallProgress = () => {
+    if (verificationSteps.length === 0) return 0;
+    
+    const totalSteps = verificationSteps.length;
+    const completedSteps = verificationSteps.filter(s => s.status === 'completed').length;
+    const runningStep = verificationSteps.find(s => s.status === 'running');
+    
+    let progress = (completedSteps / totalSteps) * 100;
+    
+    // Add progress from currently running step
+    if (runningStep) {
+      progress += (runningStep.progress / 100) * (1 / totalSteps) * 100;
+    }
+    
+    return Math.min(progress, 100);
   };
 
   return (
@@ -98,13 +178,12 @@ const VerificationReviewScreen: React.FC<VerificationReviewScreenProps> = ({
       <button 
         onClick={onBack} 
         className="absolute top-0 left-4 text-gray-400 hover:text-white z-10"
+        disabled={verificationStage === 'verifying'}
       >
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
         </svg>
       </button>
-
-
 
       {/* BeReal-style Media Layout */}
       <div className="relative mb-6">
@@ -117,9 +196,6 @@ const VerificationReviewScreen: React.FC<VerificationReviewScreenProps> = ({
             className="w-full h-80 object-cover"
             onError={(e) => {
               console.error('Video error:', e);
-              console.log('Video URL:', videoUrl);
-              console.log('Video blob size:', videoBlob.size);
-              console.log('Video blob type:', videoBlob.type);
             }}
           />
         </div>
@@ -132,9 +208,6 @@ const VerificationReviewScreen: React.FC<VerificationReviewScreenProps> = ({
             className="w-full h-full object-cover"
             onError={(e) => {
               console.error('Photo error:', e);
-              console.log('Photo URL:', photoUrl);
-              console.log('Photo blob size:', photoBlob.size);
-              console.log('Photo blob type:', photoBlob.type);
             }}
           />
         </div>
@@ -168,51 +241,125 @@ const VerificationReviewScreen: React.FC<VerificationReviewScreenProps> = ({
         </div>
       </div>
 
-      {/* Condensed Verification Progress */}
-      <div className="bg-gray-800/30 rounded-xl p-4 mb-6">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-lg font-medium">Verification Progress</h3>
-          <div className="flex items-center space-x-2">
-            {verificationStage === 'verifying' && (
-              <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            )}
-            {verificationStage === 'complete' && (
-              <div className="w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
-                <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                  <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </div>
+      {/* Verification Section */}
+      {verificationStage === 'ready' ? (
+        // Ready to verify
+        <div className="bg-gray-800/30 rounded-xl p-4 mb-6">
+          <h3 className="text-lg font-medium mb-3">Review Your Submission</h3>
+          
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-300">Challenge:</span>
+              <span className="text-white font-medium">{challenge.title}</span>
+            </div>
+            
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-300">Video Size:</span>
+              <span className="text-white">{(videoBlob.size / 1024 / 1024).toFixed(1)} MB</span>
+            </div>
+            
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-300">Photo Size:</span>
+              <span className="text-white">{(photoBlob.size / 1024).toFixed(1)} KB</span>
+            </div>
+          </div>
+
+          <div className="mt-4 p-3 bg-blue-900/20 rounded-lg border border-blue-800/30">
+            <p className="text-xs text-blue-300">
+              Click "Start Verification" to validate your submission with AI verification.
+            </p>
+          </div>
+        </div>
+      ) : (
+        // Verification in progress or completed
+        <div className="bg-gray-800/30 rounded-xl p-4 mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-lg font-medium">Verification Progress</h3>
+            <div className="flex items-center space-x-2">
+              {verificationStage === 'verifying' && (
+                <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              )}
+              {verificationStage === 'complete' && (
+                <div className="w-4 h-4 bg-green-500 rounded-full flex items-center justify-center">
+                  <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                    <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              )}
+              {verificationStage === 'failed' && (
+                <div className="w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
+                  <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                    <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Main Progress Bar */}
+          <div className="w-full bg-gray-700 rounded-full h-2 mb-4">
+            <div 
+              className={`h-2 rounded-full transition-all duration-500 ${
+                verificationStage === 'complete' 
+                  ? 'bg-gradient-to-r from-green-500 to-green-400' 
+                  : verificationStage === 'failed'
+                  ? 'bg-gradient-to-r from-red-500 to-red-400'
+                  : 'bg-gradient-to-r from-blue-500 to-purple-500'
+              }`}
+              style={{ width: `${getOverallProgress()}%` }}
+            />
+          </div>
+
+          {/* Individual Steps */}
+          {verificationSteps.length > 0 && (
+            <div className="space-y-2 mb-4">
+              {verificationSteps.map((step) => (
+                <div key={step.id} className="flex items-center justify-between text-sm">
+                  <div className="flex items-center space-x-2">
+                    {getStepStatusIcon(step)}
+                    <span className={`${
+                      step.status === 'completed' ? 'text-green-400' :
+                      step.status === 'failed' ? 'text-red-400' :
+                      step.status === 'running' ? 'text-blue-400' :
+                      'text-gray-500'
+                    }`}>
+                      {step.name}
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    {step.confidence && (
+                      <span className="text-xs text-gray-400">
+                        {Math.round(step.confidence * 100)}%
+                      </span>
+                    )}
+                    {step.status === 'running' && (
+                      <span className="text-xs text-blue-400">
+                        {step.progress}%
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Status Message */}
+          <div className="text-center">
+            <p className={`text-sm font-medium ${
+              verificationStage === 'complete' ? 'text-green-400' : 
+              verificationStage === 'failed' ? 'text-red-400' :
+              'text-blue-400'
+            }`}>
+              {currentStepMessage}
+            </p>
+            {verificationResult && (
+              <p className="text-xs text-gray-500 mt-1">
+                Overall confidence: {Math.round(verificationResult.overallConfidence * 100)}%
+              </p>
             )}
           </div>
         </div>
-
-        {/* Progress Bar */}
-        <div className="w-full bg-gray-700 rounded-full h-2 mb-3">
-          <div 
-            className={`h-2 rounded-full transition-all duration-500 ${
-              verificationStage === 'complete' 
-                ? 'bg-gradient-to-r from-green-500 to-green-400' 
-                : 'bg-gradient-to-r from-blue-500 to-purple-500'
-            }`}
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-
-        {/* Status Message */}
-        <div className="text-center">
-          <p className={`text-sm font-medium ${
-            verificationStage === 'complete' ? 'text-green-400' : 'text-blue-400'
-          }`}>
-            {getVerificationMessage()}
-          </p>
-          <p className="text-xs text-gray-500 mt-1">
-            {verificationStage === 'complete' 
-              ? 'Video quality, AI analysis, face detection, and identity matching completed'
-              : 'Running video quality, AI analysis, face detection, and identity verification checks'
-            }
-          </p>
-        </div>
-      </div>
+      )}
 
       {/* Action Buttons */}
       <div className="flex gap-3">
@@ -223,14 +370,28 @@ const VerificationReviewScreen: React.FC<VerificationReviewScreenProps> = ({
         >
           Retake
         </button>
-        <PrimaryButton
-          onClick={handleSubmit}
-          text={verificationStage === 'complete' ? "Submit Verification" : "Verifying..."}
-          className="flex-1"
-          disabled={verificationStage !== 'complete'}
-        />
+        
+        {verificationStage === 'ready' ? (
+          <PrimaryButton
+            onClick={startVerification}
+            text="Start Verification"
+            className="flex-1"
+          />
+        ) : (
+          <PrimaryButton
+            onClick={handleSubmit}
+            text={
+              verificationStage === 'complete' ? "Submit Challenge" :
+              verificationStage === 'failed' ? "Retry Verification" :
+              "Verifying..."
+            }
+            className="flex-1"
+            disabled={verificationStage === 'verifying'}
+          />
+        )}
       </div>
 
+      {/* Result Messages */}
       {verificationStage === 'complete' && (
         <div className="mt-4 bg-green-900/20 rounded-lg p-3 border border-green-800/30">
           <div className="flex items-center gap-2">
@@ -238,7 +399,20 @@ const VerificationReviewScreen: React.FC<VerificationReviewScreenProps> = ({
               <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             <p className="text-xs text-green-300">
-              All verification checks passed! You can now submit your verification.
+              All verification checks passed! You can now submit your challenge.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {verificationStage === 'failed' && (
+        <div className="mt-4 bg-red-900/20 rounded-lg p-3 border border-red-800/30">
+          <div className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M18 6L6 18M6 6l12 12" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <p className="text-xs text-red-300">
+              Verification failed. Please check your submission and try again.
             </p>
           </div>
         </div>
