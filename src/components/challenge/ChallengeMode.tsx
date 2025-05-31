@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
 import PrimaryButton from '../ui/PrimaryButton';
 import ThematicContainer from '../ui/ThematicContainer';
+import CompleteChallengeScreen from './CompleteChallenge';
 
 interface ChallengeModeProps {
   onSuccess: (token: string) => void;
@@ -27,75 +28,116 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
   apiEndpoint,
   onBack,
 }) => {
-  const [stage, setStage] = useState<'challenge' | 'processing' | 'success'>('challenge');
+  const [stage, setStage] = useState<'challenge' | 'processing' | 'success' | 'completing'>('challenge');
   const [challengeToken, setChallengeToken] = useState<string>('');
   const [challenge, setChallenge] = useState<Challenge | null>(null);
+  
+  // Track the last 3 challenges that were generated (and potentially regenerated)
+  const [challengeHistory, setChallengeHistory] = useState<Challenge[]>([]);
+
+  // Helper function to add challenge to history
+  const addToHistory = (newChallenge: Challenge) => {
+    setChallengeHistory(prev => {
+      const updated = [newChallenge, ...prev];
+      // Keep only the last 3 challenges
+      return updated.slice(0, 3);
+    });
+  };
 
   // Generate random challenge on component mount
   useEffect(() => {
-    const fetchChallenge = async () => {
-      try {
-        const response = await fetch('/api/generate-challenge', {
-          method: 'POST',
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-          setChallenge(data.challenge);
-        } else {
-          // Fallback to hardcoded challenge if API fails
-          const randomPhotoNumber = Math.floor(Math.random() * 3) + 1;
-          const colors = ["nocenaPink", "nocenaBlue", "nocenaPurple"];
-          
-          setChallenge({
-            title: "Take a quick selfie",
-            description: "Show us your face to verify you're a real person.",
-            challengerName: "Nocena GPT",
-            challengerProfile: `/images/${randomPhotoNumber}.jpg`,
-            reward: 50,
-            color: colors[Math.floor(Math.random() * colors.length)]
-          });
-        }
-      } catch (error) {
-        console.error('Failed to fetch challenge:', error);
-        // Fallback challenge
-        const randomPhotoNumber = Math.floor(Math.random() * 3) + 1;
-        const colors = ["nocenaPink", "nocenaBlue", "nocenaPurple"];
-        
-        setChallenge({
-          title: "Show your hands",
-          description: "Simple verification - take a photo of your hands.",
-          challengerName: "Nocena GPT", 
-          challengerProfile: `/images/${randomPhotoNumber}.jpg`,
-          reward: 40,
-          color: colors[Math.floor(Math.random() * colors.length)]
-        });
-      }
-    };
-
     fetchChallenge();
   }, []);
 
-  const handleCompleteChallenge = async () => {
-    setStage('processing');
-
+  const fetchChallenge = async (isRegeneration = false) => {
     try {
-      const response = await fetch(apiEndpoint, {
+      const response = await fetch('/api/generate-challenge', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          challengeData: challenge,
-          timestamp: Date.now()
+          challengeHistory: challengeHistory
         }),
       });
-
+      
       const data = await response.json();
+      
+      if (data.success) {
+        setChallenge(data.challenge);
+        // Only add to history if this is a regeneration (user didn't like previous ones)
+        if (isRegeneration && challenge) {
+          addToHistory(challenge);
+        }
+      } else {
+        // Fallback to hardcoded challenge if API fails
+        const randomPhotoNumber = Math.floor(Math.random() * 3) + 1;
+        const colors = ["nocenaPink", "nocenaBlue", "nocenaPurple"];
+        
+        const fallbackChallenge = {
+          title: "Take a quick selfie",
+          description: "Show us your face to verify you're a real person.",
+          challengerName: "Nocena GPT",
+          challengerProfile: `/images/${randomPhotoNumber}.jpg`,
+          reward: 50,
+          color: colors[Math.floor(Math.random() * colors.length)]
+        };
+        
+        setChallenge(fallbackChallenge);
+        if (isRegeneration && challenge) {
+          addToHistory(challenge);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch challenge:', error);
+      // Fallback challenge
+      const randomPhotoNumber = Math.floor(Math.random() * 3) + 1;
+      const colors = ["nocenaPink", "nocenaBlue", "nocenaPurple"];
+      
+      const fallbackChallenge = {
+        title: "Show your hands",
+        description: "Simple verification - take a photo of your hands.",
+        challengerName: "Nocena GPT", 
+        challengerProfile: `/images/${randomPhotoNumber}.jpg`,
+        reward: 40,
+        color: colors[Math.floor(Math.random() * colors.length)]
+      };
+      
+      setChallenge(fallbackChallenge);
+      if (isRegeneration && challenge) {
+        addToHistory(challenge);
+      }
+    }
+  };
 
-      if (response.ok && data.success) {
-        const challengeToken = data.token || `vhp_challenge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const handleCompleteChallenge = async () => {
+    // Instead of processing, go to the complete challenge screen
+    setStage('completing');
+  };
+
+  // Updated to handle both video and photo
+  const handleChallengeCompletion = async (data: { video: Blob; photo: Blob }) => {
+    setStage('processing');
+
+    try {
+      // Create FormData to send challenge data, video, and photo
+      const formData = new FormData();
+      formData.append('video', data.video, 'challenge-video.webm');
+      formData.append('photo', data.photo, 'verification-selfie.jpg');
+      formData.append('challengeData', JSON.stringify({
+        ...challenge,
+        timestamp: Date.now()
+      }));
+
+      const response = await fetch(apiEndpoint, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const responseData = await response.json();
+
+      if (response.ok && responseData.success) {
+        const challengeToken = responseData.token || `vhp_challenge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         setChallengeToken(challengeToken);
         setStage('success');
         
@@ -104,7 +146,7 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
           onSuccess(challengeToken);
         }, 2000);
       } else {
-        onFailed(data.message || 'Challenge verification failed');
+        onFailed(responseData.message || 'Challenge verification failed');
         setStage('challenge');
       }
     } catch (error) {
@@ -112,6 +154,11 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
       onFailed('Network error during challenge verification');
       setStage('challenge');
     }
+  };
+
+  const handleRegenerate = async () => {
+    setChallenge(null); // Show loading
+    await fetchChallenge(true); // Pass true to indicate this is a regeneration
   };
 
   if (!challenge) {
@@ -158,55 +205,13 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
             glassmorphic={true}
             color={challenge.color as any}
             rounded="xl"
-            className="w-full px-6 py-4 mb-6 relative" // Make sure parent has relative positioning
+            className="w-full px-6 py-4 mb-6 relative"
           >
-            {/* Regenerate Button - Using regular button */}
+            {/* Regenerate Button */}
             <button
               className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center z-10 bg-blue-600 hover:bg-blue-700 rounded-full transition-colors"
-              onClick={async () => {
-                setChallenge(null); // Show loading
-                const fetchChallenge = async () => {
-                  try {
-                    const response = await fetch('/api/generate-challenge', {
-                      method: 'POST',
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (data.success) {
-                      setChallenge(data.challenge);
-                    } else {
-                      // Fallback to hardcoded challenge if API fails
-                      const randomPhotoNumber = Math.floor(Math.random() * 3) + 1;
-                      const colors = ["nocenaPink", "nocenaBlue", "nocenaPurple"];
-                      
-                      setChallenge({
-                        title: "Take a quick selfie",
-                        description: "Show us your face to verify you're a real person.",
-                        challengerName: "Nocena GPT",
-                        challengerProfile: `/images/${randomPhotoNumber}.jpg`,
-                        reward: 50,
-                        color: colors[Math.floor(Math.random() * colors.length)]
-                      });
-                    }
-                  } catch (error) {
-                    console.error('Failed to fetch challenge:', error);
-                    // Fallback challenge
-                    const randomPhotoNumber = Math.floor(Math.random() * 3) + 1;
-                    const colors = ["nocenaPink", "nocenaBlue", "nocenaPurple"];
-                    
-                    setChallenge({
-                      title: "Show your hands",
-                      description: "Simple verification - take a photo of your hands.",
-                      challengerName: "Nocena GPT", 
-                      challengerProfile: `/images/${randomPhotoNumber}.jpg`,
-                      reward: 40,
-                      color: colors[Math.floor(Math.random() * colors.length)]
-                    });
-                  }
-                };
-                fetchChallenge();
-              }}
+              onClick={handleRegenerate}
+              title="Get a different challenge"
             >
               <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
@@ -219,7 +224,7 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
             {/* Challenge Title - Added right padding to avoid overlap */}
             <div className="text-lg font-light mb-3 pr-12">{challenge.title}</div>
 
-            {/* Rest of the content remains the same */}
+            {/* Challenge Description */}
             <div className="text-sm text-gray-300 mb-4 leading-relaxed">
               {challenge.description}
             </div>
@@ -249,6 +254,16 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
             </div>
           </ThematicContainer>
 
+          {/* Debug info (remove in production) */}
+          {challengeHistory.length > 0 && (
+            <div className="bg-gray-800/30 rounded-lg p-2 mb-4 text-xs">
+              <p className="text-gray-400 mb-1">Recently generated ({challengeHistory.length}):</p>
+              {challengeHistory.map((prev, index) => (
+                <p key={index} className="text-gray-500">• {prev.title}</p>
+              ))}
+            </div>
+          )}
+
           {/* Instructions */}
           <div className="bg-blue-900/20 rounded-lg p-3 mb-6 border border-blue-800/30">
             <div className="flex items-start gap-2">
@@ -258,7 +273,8 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
                 <circle cx="12" cy="17" r=".5" />
               </svg>
               <p className="text-xs text-blue-300">
-                Click "Accept Challenge" to complete this task and earn your verification token.
+                Complete the challenge and take a verification selfie to earn your token.
+                {challengeHistory.length > 0 && " Don't like this one? Click the refresh button to get something different!"}
               </p>
             </div>
           </div>
@@ -267,16 +283,24 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
           <PrimaryButton
             className="mt-4"
             onClick={handleCompleteChallenge}
-            text="Accept Challenge"
+            text="Start Challenge"
           />
         </>
+      )}
+
+      {stage === 'completing' && (
+        <CompleteChallengeScreen 
+          challenge={challenge}
+          onComplete={handleChallengeCompletion}
+          onBack={() => setStage('challenge')}
+        />
       )}
 
       {stage === 'processing' && (
         <div className="flex flex-col items-center justify-center py-12">
           <div className="w-12 h-12 border-4 border-pink-500 border-t-transparent rounded-full animate-spin mb-4" />
           <p className="text-gray-300">Verifying challenge completion...</p>
-          <p className="text-xs text-gray-400 mt-2">This may take a moment</p>
+          <p className="text-xs text-gray-400 mt-2">Processing video and identity verification</p>
         </div>
       )}
 
@@ -289,8 +313,8 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
             </svg>
           </div>
           
-          <h3 className="text-xl font-medium text-green-400 mb-2">Challenge Complete!</h3>
-          <p className="text-sm text-gray-300 text-center mb-4">You've successfully verified as human</p>
+          <h3 className="text-xl font-medium text-green-400 mb-2">Verification Complete!</h3>
+          <p className="text-sm text-gray-300 text-center mb-4">Challenge and identity verification successful</p>
           
           {/* Show verification token */}
           <div className="bg-gray-800/50 rounded-lg px-4 py-2 mb-4">

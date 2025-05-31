@@ -1,8 +1,22 @@
 // src/app/api/generate-challenge/route.ts
 import { NextResponse } from 'next/server';
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    // Parse the request body to get challenge history
+    const body = await request.json().catch(() => ({}));
+    const challengeHistory = body.challengeHistory || [];
+    
+    // Create history context for the AI prompt
+    let historyContext = "";
+    if (challengeHistory.length > 0) {
+      historyContext = `\n\nIMPORTANT: The user has recently seen these challenges and regenerated them (they didn't like them). Please create something completely different from these:\n`;
+      challengeHistory.forEach((challenge: any, index: number) => {
+        historyContext += `${index + 1}. "${challenge.title}" - ${challenge.description}\n`;
+      });
+      historyContext += "\nMake sure your new challenge is creative and different from the above patterns.";
+    }
+
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -20,10 +34,17 @@ Requirements:
 - Must be something they can do right now (no going outside, no specific objects)
 - Safe and appropriate for all users
 - Can be completed in under 30 seconds
-- Try to be fun and exciting within these constrains
-- Examples: "Show your hands", "Give us a tour of your workspace", "Show something you drink", "Capture your current view", "Take a deep breath and relax", "Do a pushup", "Combine two completely different foods and eat the creation.", Learn a sentence in a language you don't know.", "Play the floor is lava.", "Try balancing an ice cube on your nose."
+- Try to be fun and exciting within these constraints
+- Examples: "Show your hands", "Give us a tour of your workspace", "Show something you drink", "Capture your current view", "Take a deep breath and relax", "Do a pushup", "Combine two completely different foods and eat the creation", "Learn a sentence in a language you don't know", "Play the floor is lava", "Try balancing an ice cube on your nose"
 
-Really try to be fun why keeping the challenge completable. All of the challenges will be done in a 30 second video so no selfies!"
+Really try to be fun while keeping the challenge completable. All of the challenges will be done in a 30 second video so no selfies!
+
+Also you keep coming up with dance lessons all the time - try to be a little more creative!
+
+BE CREATIVE AND VARIED - avoid repetitive patterns and think outside the box for unique, entertaining challenges.
+
+Here are up to the 3 last challenges you came up with and the user rejected them trying to regenerate something a little different:
+${historyContext}
 
 Respond ONLY with a JSON object in this exact format:
 {
@@ -87,6 +108,16 @@ Respond ONLY with a JSON object in this exact format:
           title: "Strike a silly pose",
           description: "Quickly strike the silliest pose you can and hold it for a few seconds.",
           reward: 4
+        },
+        {
+          title: "Make a funny face",
+          description: "Show us your goofiest facial expression and hold it for the camera.",
+          reward: 3
+        },
+        {
+          title: "Show your workspace",
+          description: "Give us a quick tour of where you're sitting or working right now.",
+          reward: 2
         }
       ];
 
