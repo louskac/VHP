@@ -9,6 +9,13 @@ interface AIChallengeResponse {
   explanation: string;
   confidence: number; // 0-1
   error?: string;
+  framesAnalyzed?: number;
+}
+
+interface RequestBody {
+  challengeDescription: string;
+  frames: string[]; // Base64 encoded frames
+  frameCount: number;
 }
 
 // Initialize OpenAI client
@@ -17,225 +24,209 @@ const openai = new OpenAI({
 });
 
 /**
- * Extract frames from video blob at 4 frames per second
+ * Create GPT-4 Vision messages from base64 frames
  */
-async function extractVideoFrames(videoFile: File): Promise<string[]> {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement('video');
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d')!;
-    const frames: string[] = [];
-    
-    video.onloadedmetadata = () => {
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
-      
-      const duration = video.duration;
-      const frameInterval = 0.25; // 4 frames per second (1/4 = 0.25)
-      const maxFrames = 20; // Limit total frames to avoid token limits
-      
-      console.log(`📹 Video duration: ${duration}s, extracting ${Math.min(Math.ceil(duration * 4), maxFrames)} frames`);
-      
-      let currentTime = 0;
-      let frameCount = 0;
-      
-      const extractFrame = () => {
-        if (frameCount >= maxFrames || currentTime >= duration) {
-          console.log(`✅ Extracted ${frames.length} frames total`);
-          resolve(frames);
-          return;
-        }
-        
-        video.currentTime = currentTime;
-        
-        video.onseeked = () => {
-          try {
-            // Draw video frame to canvas
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            // Convert to base64 (reduce quality to save tokens)
-            const frameData = canvas.toDataURL('image/jpeg', 0.7);
-            const base64Data = frameData.split(',')[1]; // Remove data:image/jpeg;base64, prefix
-            frames.push(base64Data);
-            
-            console.log(`📷 Extracted frame ${frameCount + 1} at ${currentTime.toFixed(2)}s`);
-            
-            frameCount++;
-            currentTime += frameInterval;
-            
-            // Continue to next frame
-            setTimeout(extractFrame, 50);
-          } catch (error) {
-            console.warn(`⚠️ Failed to extract frame at ${currentTime}s:`, error);
-            frameCount++;
-            currentTime += frameInterval;
-            setTimeout(extractFrame, 50);
-          }
-        };
-        
-        video.onerror = () => {
-          console.warn(`⚠️ Video seek error at ${currentTime}s`);
-          frameCount++;
-          currentTime += frameInterval;
-          setTimeout(extractFrame, 50);
-        };
-      };
-      
-      extractFrame();
-    };
-    
-    video.onerror = () => reject(new Error('Failed to load video for frame extraction'));
-    video.src = URL.createObjectURL(videoFile);
-    video.load();
-  });
-}
-
-/**
- * Server-side frame extraction using canvas in Node.js environment
- * Note: This is a simplified approach - in production you might want to use ffmpeg
- */
-async function extractFramesServerSide(videoBuffer: Buffer): Promise<string[]> {
-  // For server-side implementation, we'd need additional libraries like ffmpeg
-  // For now, we'll simulate frame extraction
-  console.log('⚠️ Server-side frame extraction not implemented - using client-side approach');
-  return [];
-}
-
-export async function POST(request: NextRequest) {
-  console.group('🤖 AI CHALLENGE CHECK API (Frame-based)');
-  
-  try {
-    // Parse the incoming form data
-    const formData = await request.formData();
-    
-    // Extract challenge description
-    const challengeDescription = formData.get('challengeDescription') as string;
-    if (!challengeDescription) {
-      throw new Error('Challenge description is required');
-    }
-
-    // Extract video file
-    const videoFile = formData.get('video') as File;
-    if (!videoFile) {
-      throw new Error('Video file is required');
-    }
-
-    console.log('📋 Request details:', {
-      challenge: challengeDescription.substring(0, 100) + '...',
-      videoSize: `${(videoFile.size / 1024 / 1024).toFixed(2)} MB`,
-      videoType: videoFile.type
-    });
-
-    // Convert video to frames (this needs to be done client-side in real implementation)
-    // For now, we'll simulate the process
-    console.log('📤 Processing video frames...');
-
-    // In a real implementation, frames would be extracted client-side and sent separately
-    // For this demo, we'll create a response based on video metadata
-    
-    // Simulate frame extraction process
-    const videoBuffer = await videoFile.arrayBuffer();
-    const estimatedDuration = videoFile.size / (1024 * 1024); // Rough estimate
-    const estimatedFrames = Math.min(Math.ceil(estimatedDuration * 4), 20);
-    
-    console.log(`📊 Estimated ${estimatedFrames} frames from ${estimatedDuration.toFixed(1)}s video`);
-
-    // Prepare the prompt for ChatGPT Vision (this would use actual frames)
-    const systemPrompt = `You are an AI judge evaluating whether a user completed a challenge correctly and creatively by analyzing video frames.
+function createVisionMessages(frames: string[], challengeDescription: string) {
+  const systemPrompt = `You are an AI judge evaluating whether a user completed a challenge correctly and creatively by analyzing video frames from their submission.
 
 Scoring Guidelines:
-0 - Nothing at all / No attempt visible
-20 - User did something completely unrelated to the challenge
-40 - Not sure, but something seems to resemble the challenge attempt
-60 - User completed the challenge but in a basic, boring way - lacks human creativity
-80 - User had fun with the challenge and completed it in a fun, creative, human way
-100 - User had a great time with the challenge, definitely completed it creatively, maybe even added their own twist
+0-20: Nothing related to the challenge / No attempt visible / Completely wrong activity
+20-40: Some activity visible but doesn't match the challenge requirements  
+40-60: Challenge requirements met but execution is basic, boring, or lacks engagement
+60-80: Challenge completed well with some creativity, effort, and human-like fun
+80-100: Excellent completion - creative, engaging, fun, possibly with personal flair
 
-Important:
-- Analyze the sequence of frames to understand the progression
-- Focus on whether the challenge was actually completed
-- Look for creativity, fun, and human-like behavior
-- Consider effort and engagement level
-- Be fair but encouraging
-- Provide a score from 0-100 and explain your reasoning`;
+Analysis Focus:
+- Examine the sequence of frames to understand the complete action/story
+- Assess if the specific challenge requirements were met
+- Evaluate creativity, effort, and engagement level
+- Consider if the execution feels authentic and human-like
+- Look for signs of fun, personality, or creative interpretation
+- Pay attention to progression and change between frames
 
-    const userPrompt = `Challenge: "${challengeDescription}"
+Be fair but encouraging. Users should feel motivated to participate more.`;
 
-I have analyzed video frames showing a user attempting this challenge. Based on the sequence of actions visible across multiple frames:
+  const userPrompt = `Challenge: "${challengeDescription}"
 
-1. Did the user complete the challenge as described?
-2. How creative/fun/engaging was their approach?
-3. Does it feel authentic and human?
+I'm providing you with ${frames.length} frames extracted from a video submission showing the user's attempt at completing this challenge. The frames are in chronological order.
+
+Please analyze these frames as a sequence and evaluate:
+1. Did the user actually complete the challenge as described?
+2. How creative, fun, and engaging was their approach?
+3. Does the execution feel authentic and human-like?
+4. What's the overall quality and effort level?
+5. Is there progression/story visible across the frames?
 
 Respond with ONLY a JSON object in this exact format:
 {
   "score": [number from 0-100],
-  "explanation": "[2-3 sentence explanation of your scoring]",
-  "completed": [true/false - whether challenge was actually completed],
-  "creativity": [number from 0-10 - creativity level],
-  "authenticity": [number from 0-10 - how human/authentic it feels]
+  "explanation": "[2-3 sentences explaining your scoring reasoning]",
+  "completed": [true/false],
+  "creativity": [number from 0-10],
+  "authenticity": [number from 0-10],
+  "effort": [number from 0-10]
 }`;
 
-    console.log('🧠 Sending frames to OpenAI GPT-4o...');
-
-    // For now, we'll simulate the OpenAI response since we can't extract frames server-side
-    // In the real implementation, frames would be included in the API call
-    
-    /* Real implementation would look like this:
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
+  // Create the messages array
+  const messages: any[] = [
+    {
+      role: "system",
+      content: systemPrompt
+    },
+    {
+      role: "user",
+      content: [
         {
-          role: "system",
-          content: systemPrompt
+          type: "text",
+          text: userPrompt
         },
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: userPrompt
-            },
-            ...frames.map(frame => ({
-              type: "image_url",
-              image_url: {
-                url: `data:image/jpeg;base64,${frame}`,
-                detail: "low"
-              }
-            }))
-          ]
-        }
-      ],
-      max_tokens: 300,
-      temperature: 0.3,
+        // Add all frames
+        ...frames.map((frameBase64, index) => ({
+          type: "image_url",
+          image_url: {
+            url: `data:image/jpeg;base64,${frameBase64}`,
+            detail: "low" // Use "low" to save tokens, "high" for better analysis
+          }
+        }))
+      ]
+    }
+  ];
+
+  return messages;
+}
+
+export async function POST(request: NextRequest) {
+  console.group('🤖 AI CHALLENGE CHECK API');
+  
+  try {
+    // Check if OpenAI API key is available
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error('OpenAI API key not configured');
+    }
+
+    // Parse the JSON request body
+    let requestBody: RequestBody;
+    try {
+      requestBody = await request.json();
+    } catch (error) {
+      throw new Error('Invalid JSON in request body');
+    }
+
+    const { challengeDescription, frames, frameCount } = requestBody;
+
+    // Validate required fields
+    if (!challengeDescription) {
+      throw new Error('Challenge description is required');
+    }
+
+    if (!frames || !Array.isArray(frames) || frames.length === 0) {
+      throw new Error('No valid frames provided');
+    }
+
+    if (frameCount !== frames.length) {
+      console.warn(`⚠️ Frame count mismatch: expected ${frameCount}, got ${frames.length}`);
+    }
+
+    console.log('📋 Request details:', {
+      challenge: challengeDescription.substring(0, 100) + (challengeDescription.length > 100 ? '...' : ''),
+      frameCount: frames.length,
+      avgFrameSize: `${(frames.reduce((sum, f) => sum + f.length, 0) / frames.length / 1024).toFixed(1)}KB`,
+      totalDataSize: `${(frames.reduce((sum, f) => sum + f.length, 0) / 1024 / 1024).toFixed(2)}MB`
     });
-    */
 
-    // Simulated response for now
-    const simulatedResponse = {
-      score: 75,
-      explanation: "Based on video frame analysis, the user appears to engage with the challenge activity. Shows moderate creativity and human-like behavior in the execution.",
-      completed: true,
-      creativity: 7,
-      authenticity: 8
-    };
+    // Validate frame count (OpenAI has token limits)
+    if (frames.length > 25) {
+      console.log(`⚠️ Too many frames (${frames.length}), reducing to 20`);
+      // Keep frames evenly spaced
+      const step = Math.floor(frames.length / 20);
+      const reducedFrames = frames.filter((_, index) => index % step === 0).slice(0, 20);
+      console.log(`📉 Reduced from ${frames.length} to ${reducedFrames.length} frames`);
+      frames.splice(0, frames.length, ...reducedFrames);
+    }
 
-    console.log('📥 AI analysis result:', simulatedResponse);
+    // Validate base64 format of frames
+    const validFrames = frames.filter(frame => {
+      try {
+        // Basic validation - check if it's valid base64
+        atob(frame.substring(0, 100)); // Test decode first 100 chars
+        return frame.length > 1000; // Reasonable minimum size
+      } catch {
+        return false;
+      }
+    });
 
-    // Calculate confidence
-    const confidence = 0.75; // Moderate confidence for simulated result
+    if (validFrames.length === 0) {
+      throw new Error('No valid base64 frames found');
+    }
+
+    if (validFrames.length < frames.length) {
+      console.warn(`⚠️ Some frames were invalid. Using ${validFrames.length}/${frames.length} frames`);
+    }
+
+    // Create vision messages
+    const messages = createVisionMessages(validFrames, challengeDescription);
+    
+    console.log('🧠 Sending to OpenAI GPT-4 Vision...');
+    console.log(`📊 Analysis payload: ${validFrames.length} frames`);
+
+    // Call OpenAI GPT-4 Vision API
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o", // Latest model with vision capabilities
+      messages: messages,
+      max_tokens: 600,
+      temperature: 0.2, // Lower temperature for more consistent scoring
+      response_format: { type: "json_object" } // Force JSON response
+    });
+
+    const aiResponse = response.choices[0]?.message?.content;
+    
+    if (!aiResponse) {
+      throw new Error('No response from OpenAI');
+    }
+
+    console.log('📥 Raw AI response:', aiResponse);
+
+    // Parse AI response
+    let analysisResult;
+    try {
+      analysisResult = JSON.parse(aiResponse);
+    } catch (error) {
+      console.error('❌ Failed to parse AI response as JSON:', aiResponse);
+      throw new Error('AI returned invalid JSON response');
+    }
+
+    // Validate and normalize the response
+    const score = Math.max(0, Math.min(100, analysisResult.score || 0));
+    const explanation = analysisResult.explanation || 'AI analysis completed';
+    const completed = analysisResult.completed || false;
+    const creativity = Math.max(0, Math.min(10, analysisResult.creativity || 0));
+    const authenticity = Math.max(0, Math.min(10, analysisResult.authenticity || 0));
+    const effort = Math.max(0, Math.min(10, analysisResult.effort || 0));
+
+    // Calculate confidence based on various factors
+    const confidence = Math.min(1.0, (
+      (creativity + authenticity + effort) / 30 * 0.4 + // Quality factors (40%)
+      (score / 100) * 0.4 + // Score factor (40%)
+      (validFrames.length / 20) * 0.2 // Frame count factor (20%)
+    ));
 
     const result: AIChallengeResponse = {
       success: true,
-      score: simulatedResponse.score,
-      explanation: `${simulatedResponse.explanation} (Analysis based on ${estimatedFrames} extracted frames)`,
-      confidence
+      score,
+      explanation: `${explanation} (Creativity: ${creativity}/10, Authenticity: ${authenticity}/10, Effort: ${effort}/10)`,
+      confidence,
+      framesAnalyzed: validFrames.length
     };
 
     console.log('✅ AI evaluation completed:', {
-      score: `${result.score}/100`,
+      score: `${score}/100`,
+      completed,
       confidence: `${Math.round(confidence * 100)}%`,
-      framesAnalyzed: estimatedFrames
+      creativity: `${creativity}/10`,
+      authenticity: `${authenticity}/10`,
+      effort: `${effort}/10`,
+      framesAnalyzed: validFrames.length,
+      tokensUsed: response.usage?.total_tokens || 'unknown'
     });
 
     console.groupEnd();
@@ -247,6 +238,37 @@ Respond with ONLY a JSON object in this exact format:
     console.groupEnd();
 
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    
+    // Check for specific OpenAI errors
+    if (errorMessage.includes('API key') || errorMessage.includes('authentication')) {
+      return NextResponse.json({
+        success: false,
+        score: 0,
+        explanation: 'AI service temporarily unavailable (configuration issue)',
+        confidence: 0,
+        error: 'API_KEY_ERROR'
+      }, { status: 500 });
+    }
+
+    if (errorMessage.includes('tokens') || errorMessage.includes('limit') || errorMessage.includes('too large')) {
+      return NextResponse.json({
+        success: false,
+        score: 0,
+        explanation: 'Video too complex for AI analysis (try shorter video or fewer frames)',
+        confidence: 0,
+        error: 'TOKEN_LIMIT_ERROR'
+      }, { status: 400 });
+    }
+
+    if (errorMessage.includes('rate limit')) {
+      return NextResponse.json({
+        success: false,
+        score: 0,
+        explanation: 'AI service temporarily busy, please try again',
+        confidence: 0,
+        error: 'RATE_LIMIT_ERROR'
+      }, { status: 429 });
+    }
     
     return NextResponse.json({
       success: false,

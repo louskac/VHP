@@ -18,6 +18,7 @@ export interface FrameExtractionResult {
 /**
  * Extract frames from video blob on client-side
  * This must run in browser environment (not server-side)
+ * FOLLOWS THE SAME PATTERN AS tensorflowHumanDetection.ts
  */
 export async function extractVideoFrames(
   videoBlob: Blob,
@@ -27,7 +28,7 @@ export async function extractVideoFrames(
     framesPerSecond = 4,
     maxFrames = 20,
     quality = 0.7,
-    maxDimension = 64
+    maxDimension = 640
   } = options;
 
   console.group('🎬 Video Frame Extraction');
@@ -43,12 +44,24 @@ export async function extractVideoFrames(
     // Create object URL for video
     const videoUrl = URL.createObjectURL(videoBlob);
     
+    // Add timeout to prevent hanging
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('Video frame extraction timed out after 30 seconds'));
+    }, 30000);
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      URL.revokeObjectURL(videoUrl);
+      video.remove();
+    };
+    
     video.onloadedmetadata = () => {
       const duration = video.duration;
       const width = video.videoWidth;
       const height = video.videoHeight;
       
-      console.log(`📹 Video loaded: ${width}x${height}, duration: ${duration.toFixed(2)}s`);
+      console.log(`📹 Video loaded: ${width}x${height}, duration: ${duration}s`);
       
       // Calculate canvas dimensions (maintain aspect ratio)
       let canvasWidth = width;
@@ -64,87 +77,171 @@ export async function extractVideoFrames(
       canvas.width = canvasWidth;
       canvas.height = canvasHeight;
       
-      // Calculate frame extraction parameters
-      const frameInterval = 1 / framesPerSecond; // Seconds between frames
-      const totalPossibleFrames = Math.ceil(duration * framesPerSecond);
-      const framesToExtract = Math.min(totalPossibleFrames, maxFrames);
-      const actualInterval = duration / framesToExtract; // Adjust interval if limited by maxFrames
+      // FOLLOW THE SAME PATTERN AS tensorflowHumanDetection.ts
+      // If duration is invalid, try a few fixed time points
+      const timePoints = duration && isFinite(duration) && duration > 0
+        ? generateTimePoints(duration, 1 / framesPerSecond, maxFrames)
+        : [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 15.0]; // Fallback time points like in tensorflow
       
-      console.log(`📊 Extracting ${framesToExtract} frames (interval: ${actualInterval.toFixed(2)}s)`);
-      
-      let currentTime = 0;
-      let frameCount = 0;
-      
-      const extractNextFrame = () => {
-        if (frameCount >= framesToExtract || currentTime >= duration) {
-          // Cleanup and resolve
-          URL.revokeObjectURL(videoUrl);
-          
+      console.log(`📊 Extracting ${Math.min(timePoints.length, maxFrames)} frames at:`, 
+        timePoints.slice(0, maxFrames).map(t => `${t.toFixed(1)}s`).join(', '));
+
+      extractFramesAtTimePoints(video, canvas, ctx, timePoints.slice(0, maxFrames), quality)
+        .then(extractedFrames => {
           const result: FrameExtractionResult = {
-            frames,
-            totalFrames: frames.length,
-            videoDuration: duration,
-            frameRate: frames.length / duration,
+            frames: extractedFrames,
+            totalFrames: extractedFrames.length,
+            videoDuration: duration && isFinite(duration) ? duration : Math.max(...timePoints),
+            frameRate: extractedFrames.length / (duration && isFinite(duration) ? duration : Math.max(...timePoints)),
             videoResolution: { width, height }
           };
           
-          console.log(`✅ Extraction complete: ${frames.length} frames`);
+          console.log(`✅ Extraction complete: ${extractedFrames.length} frames`);
           console.groupEnd();
+          cleanup();
           resolve(result);
-          return;
-        }
-        
-        video.currentTime = currentTime;
-        
-        const onSeeked = () => {
-          try {
-            // Draw video frame to canvas
-            ctx.drawImage(video, 0, 0, canvasWidth, canvasHeight);
-            
-            // Convert to base64 JPEG
-            const frameData = canvas.toDataURL('image/jpeg', quality);
-            const base64Data = frameData.split(',')[1]; // Remove data:image/jpeg;base64, prefix
-            frames.push(base64Data);
-            
-            console.log(`📷 Frame ${frameCount + 1}/${framesToExtract} extracted (${currentTime.toFixed(2)}s)`);
-            
-            frameCount++;
-            currentTime += actualInterval;
-            
-            // Continue to next frame
-            setTimeout(extractNextFrame, 50);
-          } catch (error) {
-            console.warn(`⚠️ Failed to extract frame at ${currentTime.toFixed(2)}s:`, error);
-            frameCount++;
-            currentTime += actualInterval;
-            setTimeout(extractNextFrame, 50);
-          }
-        };
-        
-        video.onseeked = onSeeked;
-        
-        // Handle seek errors
-        video.onerror = () => {
-          console.warn(`⚠️ Video seek error at ${currentTime.toFixed(2)}s, skipping...`);
-          frameCount++;
-          currentTime += actualInterval;
-          setTimeout(extractNextFrame, 50);
-        };
-      };
-      
-      // Start extraction
-      extractNextFrame();
+        })
+        .catch(error => {
+          cleanup();
+          reject(error);
+        });
     };
     
     video.onerror = () => {
-      URL.revokeObjectURL(videoUrl);
+      cleanup();
       reject(new Error('Failed to load video for frame extraction'));
     };
+    
+    // Configure video for metadata loading (same as tensorflow)
+    video.preload = 'metadata';
+    video.crossOrigin = 'anonymous';
+    video.muted = true; // Ensure it can play without user interaction
     
     // Load the video
     video.src = videoUrl;
     video.load();
   });
+}
+
+/**
+ * Generate time points for frame analysis (SAME AS tensorflowHumanDetection.ts)
+ */
+function generateTimePoints(duration: number, interval: number, maxFrames: number): number[] {
+  const timePoints: number[] = [];
+  let currentTime = 0;
+  
+  while (currentTime < duration - 0.1 && timePoints.length < maxFrames) {
+    timePoints.push(currentTime);
+    currentTime += interval;
+  }
+  
+  return timePoints;
+}
+
+/**
+ * Extract frames at specific time points (SAME LOGIC AS tensorflowHumanDetection.ts)
+ */
+async function extractFramesAtTimePoints(
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  timePoints: number[],
+  quality: number
+): Promise<string[]> {
+  const frames: string[] = [];
+  
+  for (let i = 0; i < timePoints.length; i++) {
+    const timePoint = timePoints[i];
+    
+    try {
+      // Seek to the time point (SAME AS tensorflowHumanDetection.ts)
+      await seekToTime(video, timePoint);
+      
+      // Wait a bit for the frame to be available (SAME AS tensorflowHumanDetection.ts)
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
+      // Clear canvas first
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Extract frame to canvas (SAME AS tensorflowHumanDetection.ts)
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      // Check if frame is too dark (basic brightness check)
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const brightness = calculateBrightness(imageData);
+      
+      if (brightness < 15 && frames.length === 0) {
+        console.warn(`⚠️ Frame ${i + 1} appears very dark (brightness: ${brightness.toFixed(1)}), but keeping as first frame`);
+      } else if (brightness < 10) {
+        console.warn(`⚠️ Frame ${i + 1} appears very dark (brightness: ${brightness.toFixed(1)}), skipping...`);
+        continue;
+      }
+      
+      // Convert to base64 JPEG
+      const frameData = canvas.toDataURL('image/jpeg', quality);
+      const base64Data = frameData.split(',')[1]; // Remove data:image/jpeg;base64, prefix
+      frames.push(base64Data);
+      
+      console.log(`📷 Frame ${i + 1}/${timePoints.length} extracted (${timePoint.toFixed(2)}s, brightness: ${brightness.toFixed(1)})`);
+      
+    } catch (frameError) {
+      console.warn(`⚠️ Failed to analyze frame at ${timePoint.toFixed(1)}s:`, frameError);
+      // Continue with next frame instead of stopping
+    }
+  }
+  
+  return frames;
+}
+
+/**
+ * Seek video to specific time with timeout (SAME AS tensorflowHumanDetection.ts)
+ */
+async function seekToTime(video: HTMLVideoElement, time: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const timeout = setTimeout(() => {
+      resolve(); // Continue even if seek doesn't complete
+    }, 300); // Short timeout for video seeking (SAME AS tensorflowHumanDetection.ts)
+    
+    const onSeeked = () => {
+      clearTimeout(timeout);
+      video.removeEventListener('seeked', onSeeked);
+      resolve();
+    };
+    
+    video.addEventListener('seeked', onSeeked);
+    
+    // If already at the right time (within 0.1s), resolve immediately (SAME AS tensorflowHumanDetection.ts)
+    if (Math.abs(video.currentTime - time) < 0.1) {
+      clearTimeout(timeout);
+      video.removeEventListener('seeked', onSeeked);
+      resolve();
+      return;
+    }
+    
+    video.currentTime = time;
+  });
+}
+
+/**
+ * Calculate average brightness of an image
+ */
+function calculateBrightness(imageData: ImageData): number {
+  const data = imageData.data;
+  let total = 0;
+  let count = 0;
+  
+  // Sample every 4th pixel to speed up calculation
+  for (let i = 0; i < data.length; i += 16) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    // Calculate perceived brightness
+    const brightness = (r * 0.299 + g * 0.587 + b * 0.114);
+    total += brightness;
+    count++;
+  }
+  
+  return count > 0 ? total / count : 0;
 }
 
 /**
