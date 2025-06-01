@@ -19,6 +19,7 @@ interface CompleteChallengeScreenProps {
   challenge: Challenge;
   userId: string;
   onComplete: (data: { video: Blob; photo: Blob; verificationResult?: any }) => void;
+  onSuccess: (data: { video: Blob; photo: Blob; verificationResult?: any }) => void;
   onBack: () => void;
 }
 
@@ -28,6 +29,7 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
   challenge,
   userId,
   onComplete,
+  onSuccess,
   onBack,
 }) => {
   const [stage, setStage] = useState<Stage>('ready');
@@ -190,6 +192,10 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
 
   const handleSelfieComplete = (data: { video: Blob; photo: Blob; verificationResult?: any }) => {
     onComplete(data);
+  };
+
+  const handleSelfieSuccess = (data: { video: Blob; photo: Blob; verificationResult?: any }) => {
+    onSuccess(data);
   };
 
   const formatTime = (seconds: number) => {
@@ -378,6 +384,7 @@ const CompleteChallengeScreen: React.FC<CompleteChallengeScreenProps> = ({
           videoBlob={videoBlob}
           userId={userId}
           onComplete={handleSelfieComplete}
+          onSuccess={handleSelfieSuccess}
           onBack={() => setStage('review')}
         />
       )}

@@ -21,6 +21,7 @@ interface VerificationReviewScreenProps {
   photoBlob: Blob;
   userId: string;
   onComplete: (data: { video: Blob; photo: Blob; verificationResult: any }) => void;
+  onSuccess: (data: { video: Blob; photo: Blob; verificationResult: any }) => void;
   onBack: () => void;
 }
 
@@ -30,6 +31,7 @@ const VerificationReviewScreen: React.FC<VerificationReviewScreenProps> = ({
   photoBlob,
   userId,
   onComplete,
+  onSuccess,
   onBack,
 }) => {
   const [videoUrl, setVideoUrl] = useState<string>('');
@@ -123,11 +125,21 @@ const VerificationReviewScreen: React.FC<VerificationReviewScreenProps> = ({
   };
 
   const handleSubmit = () => {
-    onComplete({ 
-      video: videoBlob, 
-      photo: photoBlob,
-      verificationResult
-    });
+    if (verificationStage === 'complete' && verificationResult?.passed) {
+      // Redirect to success screen for token claiming
+      onSuccess({ 
+        video: videoBlob, 
+        photo: photoBlob,
+        verificationResult
+      });
+    } else {
+      // For retry scenarios, use the original complete handler
+      onComplete({ 
+        video: videoBlob, 
+        photo: photoBlob,
+        verificationResult
+      });
+    }
   };
 
   const getStepStatusIcon = (step: VerificationStep) => {

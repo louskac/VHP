@@ -18,8 +18,9 @@ interface Challenge {
 interface VerificationSelfieScreenProps {
   challenge: Challenge;
   videoBlob: Blob;
-  userId: string; // Add userId prop
+  userId: string;
   onComplete: (data: { video: Blob; photo: Blob; verificationResult?: any }) => void;
+  onSuccess: (data: { video: Blob; photo: Blob; verificationResult?: any }) => void;
   onBack: () => void;
 }
 
@@ -28,8 +29,9 @@ type Stage = 'ready' | 'countdown' | 'camera' | 'review' | 'verification';
 const VerificationSelfieScreen: React.FC<VerificationSelfieScreenProps> = ({
   challenge,
   videoBlob,
-  userId, // Destructure userId
+  userId,
   onComplete,
+  onSuccess,
   onBack,
 }) => {
   const [stage, setStage] = useState<Stage>('ready');
@@ -139,6 +141,10 @@ const VerificationSelfieScreen: React.FC<VerificationSelfieScreenProps> = ({
 
   const handleVerificationComplete = (data: { video: Blob; photo: Blob; verificationResult?: any }) => {
     onComplete(data);
+  };
+
+  const handleVerificationSuccess = (data: { video: Blob; photo: Blob; verificationResult?: any }) => {
+    onSuccess(data);
   };
 
   const handleRetry = () => {
@@ -319,8 +325,9 @@ const VerificationSelfieScreen: React.FC<VerificationSelfieScreenProps> = ({
           challenge={challenge}
           videoBlob={videoBlob}
           photoBlob={photoBlob}
-          userId={userId} // Pass userId prop
+          userId={userId}
           onComplete={handleVerificationComplete}
+          onSuccess={handleVerificationSuccess}
           onBack={() => setStage('review')}
         />
       )}

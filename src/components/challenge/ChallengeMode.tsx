@@ -5,9 +5,10 @@ import Image from 'next/image';
 import PrimaryButton from '../ui/PrimaryButton';
 import ThematicContainer from '../ui/ThematicContainer';
 import CompleteChallengeScreen from './CompleteChallenge';
+import ChallengeSuccessScreen from './ChallengeSuccess';
 
 interface ChallengeModeProps {
-  userId: string; // Add userId prop
+  userId: string;
   onSuccess: (token: string) => void;
   onFailed: (error: string) => void;
   apiEndpoint: string;
@@ -24,15 +25,16 @@ interface Challenge {
 }
 
 const ChallengeMode: React.FC<ChallengeModeProps> = ({
-  userId, // Destructure userId
+  userId,
   onSuccess,
   onFailed,
   apiEndpoint,
   onBack,
 }) => {
-  const [stage, setStage] = useState<'challenge' | 'processing' | 'success' | 'completing'>('challenge');
+  const [stage, setStage] = useState<'challenge' | 'processing' | 'success' | 'completing' | 'claimingTokens'>('challenge');
   const [challengeToken, setChallengeToken] = useState<string>('');
   const [challenge, setChallenge] = useState<Challenge | null>(null);
+  const [completionData, setCompletionData] = useState<{ video: Blob; photo: Blob; verificationResult?: any } | null>(null);
   
   // Track the last 3 challenges that were generated (and potentially regenerated)
   const [challengeHistory, setChallengeHistory] = useState<Challenge[]>([]);
@@ -117,7 +119,7 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
     setStage('completing');
   };
 
-  // Updated to handle both video and photo with verification result
+  // Handle failed verification - stay in current flow
   const handleChallengeCompletion = async (data: { video: Blob; photo: Blob; verificationResult?: any }) => {
     setStage('processing');
 
@@ -129,9 +131,9 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
       formData.append('challengeData', JSON.stringify({
         ...challenge,
         timestamp: Date.now(),
-        verificationResult: data.verificationResult // Include verification results
+        verificationResult: data.verificationResult
       }));
-      formData.append('userId', userId); // Include userId for backend processing
+      formData.append('userId', userId);
 
       const response = await fetch(apiEndpoint, {
         method: 'POST',
@@ -158,6 +160,28 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
       onFailed('Network error during challenge verification');
       setStage('challenge');
     }
+  };
+
+  // Handle successful verification - go to token claiming
+  const handleChallengeSuccess = (data: { video: Blob; photo: Blob; verificationResult?: any }) => {
+    setCompletionData(data);
+    setStage('claimingTokens');
+  };
+
+  // Handle token claiming completion
+  const handleTokenClaimed = (data: { walletAddress: string; description: string; transactionId?: string; amount?: number }) => {
+    // Process the final submission with wallet address and description
+    console.log('Token claimed with data:', data);
+    
+    // Mock successful token claim
+    const challengeToken = data.transactionId || `vhp_challenge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    setChallengeToken(challengeToken);
+    setStage('success');
+    
+    // Call onSuccess after showing success state
+    setTimeout(() => {
+      onSuccess(challengeToken);
+    }, 2000);
   };
 
   const handleRegenerate = async () => {
@@ -295,9 +319,21 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
       {stage === 'completing' && (
         <CompleteChallengeScreen 
           challenge={challenge}
-          userId={userId} // Pass userId prop
+          userId={userId}
           onComplete={handleChallengeCompletion}
+          onSuccess={handleChallengeSuccess}
           onBack={() => setStage('challenge')}
+        />
+      )}
+
+      {stage === 'claimingTokens' && completionData && (
+        <ChallengeSuccessScreen
+          challenge={challenge}
+          videoBlob={completionData.video}
+          photoBlob={completionData.photo}
+          verificationResult={completionData.verificationResult || { overallConfidence: 0.95, passed: true }}
+          onClaimToken={handleTokenClaimed}
+          onBack={() => setStage('completing')}
         />
       )}
 
