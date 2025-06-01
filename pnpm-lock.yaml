@@ -15,7 +15,7 @@ importers:
         specifier: ^1.0.4
         version: 1.0.4
       '@onflow/fcl':
-        specifier: 1.17.0
+        specifier: ^1.17.0
         version: 1.17.0(@types/react@18.3.23)(google-protobuf@3.21.4)(jiti@1.21.7)(postcss@8.5.4)(react@18.3.1)(typescript@5.8.3)
       '@onflow/types':
         specifier: ^1.4.1
