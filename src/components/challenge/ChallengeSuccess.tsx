@@ -120,6 +120,31 @@ const ChallengeSuccessScreen: React.FC<ChallengeSuccessScreenProps> = ({
       if (response.ok && result.success) {
         console.log('✅ Token transfer successful:', result);
         setTransactionId(result.transactionId);
+        
+        // Save only the transaction ID to minimal storage - all data comes from on-chain
+        try {
+          const saveResponse = await fetch('/api/save-transaction', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              transactionId: result.transactionId
+            })
+          });
+
+          const saveResult = await saveResponse.json();
+          if (saveResult.success) {
+            console.log('💾 Transaction ID saved to minimal storage:', saveResult.recordId);
+            console.log('🔗 All challenge data will be fetched from Flow blockchain');
+            console.log('📄 Public transaction list:', saveResult.publicUrl);
+          } else {
+            console.warn('⚠️ Failed to save transaction ID:', saveResult.error);
+          }
+        } catch (saveError) {
+          console.warn('⚠️ Error saving transaction ID:', saveError);
+        }
+
         setStage('complete');
         
         // Call the callback after showing success

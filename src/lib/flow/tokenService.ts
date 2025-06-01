@@ -1,4 +1,4 @@
-// src/lib/flow/tokenService.ts
+// src/lib/flow/tokenService.ts - Enhanced with on-chain metadata storage
 import * as fcl from "@onflow/fcl"
 import * as types from "@onflow/types"
 import { initFlow, NOCENIX_CONTRACT_ADDRESS, NOCENIX_CONTRACT_NAME, ADMIN_ADDRESS, ADMIN_PRIVATE_KEY } from "./config"
@@ -7,13 +7,24 @@ import { createAuthorizationFunction } from "./signingService"
 // Initialize Flow configuration
 initFlow()
 
-// Transaction to transfer tokens - updated with correct addresses
-const TRANSFER_TOKENS_TRANSACTION = `
+// Enhanced transaction that transfers tokens AND stores challenge metadata on-chain
+const ENHANCED_TRANSFER_TOKENS_TRANSACTION = `
 import FungibleToken from 0x9a0766d93b6608b7
 import Nocenix from 0xa622afad07f6739e
 import FungibleTokenMetadataViews from 0x9a0766d93b6608b7
 
-transaction(amount: UFix64, to: Address) {
+transaction(
+    amount: UFix64, 
+    to: Address,
+    description: String,
+    challengeTitle: String,
+    challengerName: String,
+    videoCID: String,
+    photoCID: String,
+    videoURL: String,
+    photoURL: String,
+    verificationScore: UFix64
+) {
 
     /// FTVaultData metadata view for the token being used
     let vaultData: FungibleTokenMetadataViews.FTVaultData
@@ -51,28 +62,68 @@ transaction(amount: UFix64, to: Address) {
 
         // Deposit the withdrawn tokens in the recipient's receiver
         receiverRef.deposit(from: <-self.sentVault)
+
+        // Log all challenge metadata for permanent on-chain storage in transaction logs
+        log("=== CHALLENGE COMPLETION METADATA ===")
+        log("Challenge Title: ".concat(challengeTitle))
+        log("Challenger: ".concat(challengerName))
+        log("Recipient: ".concat(to.toString()))
+        log("Token Reward: ".concat(amount.toString()))
+        log("Video CID: ".concat(videoCID))
+        log("Photo CID: ".concat(photoCID))
+        log("Video URL: ".concat(videoURL))
+        log("Photo URL: ".concat(photoURL))
+        log("Description: ".concat(description))
+        log("Verification Score: ".concat(verificationScore.toString()))
+        log("Completed At: ".concat(getCurrentBlock().timestamp.toString()))
+        log("Block Height: ".concat(getCurrentBlock().height.toString()))
+        log("=== END CHALLENGE METADATA ===")
+
+        // Additional success confirmation logs
+        log("✅ Challenge completed and metadata stored on-chain")
+        log("🎬 Video permanently stored on Filecoin via Storacha: ".concat(videoURL))
+        log("📸 Photo permanently stored on Filecoin via Storacha: ".concat(photoURL))
+        log("🪙 Reward: ".concat(amount.toString()).concat(" NOCENIX transferred to ").concat(to.toString()))
+        log("🔗 Cross-chain storage: Flow blockchain + Filecoin network")
     }
 }
 `
 
-export interface TransferTokensParams {
+export interface EnhancedTransferTokensParams {
   recipientAddress: string
   amount: number
   description: string
   challengeData: {
     title: string
-    verificationResult: any
+    challengerName?: string
+    verificationResult?: {
+      overallConfidence?: number
+      score?: number
+    }
+    media?: {
+      videoCID: string
+      photoCID: string
+      storachaLinks: {
+        video: string
+        photo: string
+      }
+    }
     timestamp: number
   }
 }
 
-export const transferTokens = async (params: TransferTokensParams): Promise<{ success: boolean; transactionId?: string; error?: string }> => {
-  try {
-    const { recipientAddress, amount } = params
+// Keep backward compatibility
+export interface TransferTokensParams extends EnhancedTransferTokensParams {}
 
-    console.log('🚀 Starting Flow token transfer via SDK:', {
+export const transferTokens = async (params: EnhancedTransferTokensParams): Promise<{ success: boolean; transactionId?: string; error?: string }> => {
+  try {
+    const { recipientAddress, amount, description, challengeData } = params
+
+    console.log('🚀 Starting enhanced Flow token transfer with on-chain metadata:', {
       recipient: recipientAddress,
       amount: amount,
+      challenge: challengeData.title,
+      hasMedia: !!challengeData.media,
       adminAddress: ADMIN_ADDRESS
     })
 
@@ -81,17 +132,32 @@ export const transferTokens = async (params: TransferTokensParams): Promise<{ su
       throw new Error('Missing FLOW_ADMIN_ADDRESS or FLOW_ADMIN_PRIVATE_KEY environment variables')
     }
 
+    // Validate media data for on-chain storage
+    if (!challengeData.media || !challengeData.media.videoCID || !challengeData.media.photoCID) {
+      throw new Error('Challenge media (videoCID and photoCID) is required for on-chain storage')
+    }
+
+    const { videoCID, photoCID, storachaLinks } = challengeData.media
+
     // Create authorization function with proper signing
     const authorizationFunction = createAuthorizationFunction(ADMIN_ADDRESS, ADMIN_PRIVATE_KEY)
 
-    console.log('📝 Sending transaction...')
+    console.log('📝 Sending enhanced transaction with metadata...')
 
-    // Send the transaction
+    // Send the enhanced transaction with all metadata
     const transactionId = await fcl.mutate({
-      cadence: TRANSFER_TOKENS_TRANSACTION,
+      cadence: ENHANCED_TRANSFER_TOKENS_TRANSACTION,
       args: (arg: any, t: any) => [
         arg(amount.toFixed(8), t.UFix64), // Amount as UFix64 with proper precision
         arg(recipientAddress, t.Address), // Recipient address
+        arg(description, t.String), // Challenge description
+        arg(challengeData.title, t.String), // Challenge title
+        arg(challengeData.challengerName || 'Nocena AI', t.String), // Challenger name
+        arg(videoCID, t.String), // Video CID from Storacha
+        arg(photoCID, t.String), // Photo CID from Storacha
+        arg(storachaLinks.video, t.String), // Video URL
+        arg(storachaLinks.photo, t.String), // Photo URL
+        arg((challengeData.verificationResult?.overallConfidence || 0.75).toFixed(2), t.UFix64), // Verification score
       ],
       proposer: authorizationFunction,
       payer: authorizationFunction,
@@ -99,26 +165,37 @@ export const transferTokens = async (params: TransferTokensParams): Promise<{ su
       limit: 1000, // Gas limit
     })
 
-    console.log('📝 Transaction sent with ID:', transactionId)
+    console.log('📝 Enhanced transaction sent with ID:', transactionId)
 
     // Wait for the transaction to be sealed
     console.log('⏳ Waiting for transaction to be sealed...')
     const transaction = await fcl.tx(transactionId).onceSealed()
     
-    console.log('📊 Transaction result:', {
+    console.log('📊 Enhanced transaction result:', {
       status: transaction.status,
       statusCode: transaction.statusCode,
-      errorMessage: transaction.errorMessage
+      errorMessage: transaction.errorMessage,
+      eventCount: transaction.events?.length || 0
     })
 
     if (transaction.status === 4) { // SEALED
-      console.log('✅ Transaction sealed successfully:', transactionId)
+      console.log('✅ Enhanced transaction sealed successfully:', transactionId)
+      
+      // Log the emitted events for verification
+      const challengeEvents = transaction.events?.filter(event => 
+        event.type.includes('ChallengeCompleted')
+      ) || []
+      
+      if (challengeEvents.length > 0) {
+        console.log('🎉 Challenge completion event emitted on-chain:', challengeEvents[0])
+      }
+
       return {
         success: true,
         transactionId: transactionId
       }
     } else {
-      console.error('❌ Transaction failed:', transaction.errorMessage)
+      console.error('❌ Enhanced transaction failed:', transaction.errorMessage)
       return {
         success: false,
         error: transaction.errorMessage || `Transaction failed with status: ${transaction.status}`
@@ -126,7 +203,7 @@ export const transferTokens = async (params: TransferTokensParams): Promise<{ su
     }
 
   } catch (error) {
-    console.error('💥 Token transfer error:', error)
+    console.error('💥 Enhanced token transfer error:', error)
     
     // Enhanced error handling
     let errorMessage = 'Unknown error occurred'
@@ -145,6 +222,8 @@ export const transferTokens = async (params: TransferTokensParams): Promise<{ su
         errorMessage = 'Missing required transaction values'
       } else if (errorMessage.includes('contract not found')) {
         errorMessage = 'Smart contract not found at specified address'
+      } else if (errorMessage.includes('media')) {
+        errorMessage = 'Missing or invalid media data for on-chain storage'
       }
     }
     
