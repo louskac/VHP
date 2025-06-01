@@ -53,6 +53,23 @@ const ChallengeSuccessScreen: React.FC<ChallengeSuccessScreenProps> = ({
     };
   }, [videoBlob, photoBlob]);
 
+  const uploadToStoracha = async (file: Blob, filename: string) => {
+    const formData = new FormData();
+    formData.append('file', file, filename);
+
+    const response = await fetch('/api/upload-to-storacha', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to upload ${filename} to Storacha`);
+    }
+
+    const result = await response.json();
+    return result.cid; // Returns the Content ID from Storacha
+  };
+
   const handleClaimToken = async () => {
     if (!walletAddress || !description) {
       return;
@@ -61,6 +78,15 @@ const ChallengeSuccessScreen: React.FC<ChallengeSuccessScreenProps> = ({
     setStage('claiming');
 
     try {
+      console.log('📁 Uploading media to Storacha...');
+      
+      // Upload video and photo to Storacha in parallel
+      const [videoCID, photoCID] = await Promise.all([
+        uploadToStoracha(videoBlob, `challenge-video-${Date.now()}.webm`),
+        uploadToStoracha(photoBlob, `challenge-selfie-${Date.now()}.jpg`)
+      ]);
+
+      console.log('✅ Media uploaded to Storacha:', { videoCID, photoCID });
       console.log('🪙 Processing token transfer...');
       
       // Call the correct API endpoint for token transfer
@@ -76,7 +102,15 @@ const ChallengeSuccessScreen: React.FC<ChallengeSuccessScreenProps> = ({
           challengeData: {
             title: challenge.title,
             verificationResult: verificationResult,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            media: {
+              videoCID,
+              photoCID,
+              storachaLinks: {
+                video: `https://${videoCID}.ipfs.w3s.link`,
+                photo: `https://${photoCID}.ipfs.w3s.link`
+              }
+            }
           }
         }),
       });
@@ -104,8 +138,12 @@ const ChallengeSuccessScreen: React.FC<ChallengeSuccessScreenProps> = ({
         setStage('input');
       }
     } catch (error) {
-      console.error('💥 Network error during token transfer:', error);
-      alert('Network error during token transfer. Please try again.');
+      console.error('💥 Error during claim process:', error);
+      if (error instanceof Error && error.message.includes('Storacha')) {
+        alert('Failed to upload media to storage. Please try again.');
+      } else {
+        alert('Network error during token transfer. Please try again.');
+      }
       setStage('input');
     }
   };
@@ -285,7 +323,10 @@ const ChallengeSuccessScreen: React.FC<ChallengeSuccessScreenProps> = ({
         <div className="flex flex-col items-center justify-center py-12">
           <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
           <h3 className="text-lg font-medium text-white mb-2">Claiming Your Reward</h3>
-          <p className="text-gray-300 text-center">
+          <p className="text-gray-300 text-center mb-2">
+            Uploading media to Storacha...
+          </p>
+          <p className="text-gray-400 text-center text-sm">
             Processing your token claim on the Flow network...
           </p>
         </div>
