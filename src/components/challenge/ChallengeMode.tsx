@@ -24,6 +24,13 @@ interface Challenge {
   color: string;
 }
 
+interface NFTReward {
+  collectionId?: string;
+  previewImage?: string;
+  status: 'generating' | 'ready' | 'error';
+  prompt?: string;
+}
+
 const ChallengeMode: React.FC<ChallengeModeProps> = ({
   userId,
   onSuccess,
@@ -35,6 +42,9 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
   const [challengeToken, setChallengeToken] = useState<string>('');
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [completionData, setCompletionData] = useState<{ video: Blob; photo: Blob; verificationResult?: any } | null>(null);
+  
+  // NFT reward state
+  const [nftReward, setNftReward] = useState<NFTReward>({ status: 'generating' });
   
   // Track the last 3 challenges that were generated (and potentially regenerated)
   const [challengeHistory, setChallengeHistory] = useState<Challenge[]>([]);
@@ -53,6 +63,74 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
     fetchChallenge();
   }, []);
 
+  // Generate NFT trophy for the challenge
+  const generateNFTReward = async (challenge: Challenge) => {
+    setNftReward({ status: 'generating' });
+    
+    try {
+      // Better prompt for futuristic NFTs
+      const trophyPrompt = `Futuristic cyber warrior completing "${challenge.title}" challenge, neon ${challenge.color} armor, holographic HUD display, digital particles, ultra-detailed 3D render, cyberpunk aesthetic, glowing energy effects, 8k resolution, trending on artstation, highly detailed, professional digital art, vibrant colors, sharp focus, cinematic lighting`;
+      
+      const response = await fetch('/api/generateChallengeNFT', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          challengeTitle: challenge.title,
+          challengeDescription: challenge.description,
+          trophyPrompt: trophyPrompt,
+        }),
+      });
+  
+      const data = await response.json();
+  
+      if (data.success && data.collectionId) {
+        pollNFTProgress(data.collectionId, trophyPrompt);
+      } else {
+        console.error('No collectionId received:', data);
+        setNftReward({ status: 'error' });
+      }
+    } catch (error) {
+      console.error('Failed to generate NFT reward:', error);
+      setNftReward({ status: 'error' });
+    }
+  };
+  
+  // Poll for NFT generation completion
+  const pollNFTProgress = async (collectionId: string, prompt: string) => {
+    const checkProgress = async () => {
+      try {
+        const response = await fetch(`/api/checkNFTProgress?collectionId=${collectionId}`);
+        const data = await response.json();
+
+        if (data.success && data.progress) {
+          const progress = data.progress;
+          
+          if (progress.data && progress.data.generated && progress.data.images) {
+            // NFT generation completed
+            setNftReward({
+              status: 'ready',
+              collectionId: collectionId,
+              previewImage: progress.data.images[0], // First image
+              prompt: prompt
+            });
+          } else {
+            // Continue polling
+            setTimeout(checkProgress, 3000);
+          }
+        } else {
+          setNftReward({ status: 'error' });
+        }
+      } catch (error) {
+        console.error('Error checking NFT progress:', error);
+        setNftReward({ status: 'error' });
+      }
+    };
+
+    checkProgress();
+  };
+
   const fetchChallenge = async (isRegeneration = false) => {
     try {
       const response = await fetch('/api/generate-challenge', {
@@ -69,7 +147,10 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
       
       if (data.success) {
         setChallenge(data.challenge);
-        // Only add to history if this is a regeneration (user didn't like previous ones)
+        // Generate NFT reward for this challenge
+        generateNFTReward(data.challenge);
+        
+        // Only add to history if this is a regeneration
         if (isRegeneration && challenge) {
           addToHistory(challenge);
         }
@@ -88,6 +169,8 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
         };
         
         setChallenge(fallbackChallenge);
+        generateNFTReward(fallbackChallenge);
+        
         if (isRegeneration && challenge) {
           addToHistory(challenge);
         }
@@ -108,6 +191,8 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
       };
       
       setChallenge(fallbackChallenge);
+      generateNFTReward(fallbackChallenge);
+      
       if (isRegeneration && challenge) {
         addToHistory(challenge);
       }
@@ -131,7 +216,8 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
       formData.append('challengeData', JSON.stringify({
         ...challenge,
         timestamp: Date.now(),
-        verificationResult: data.verificationResult
+        verificationResult: data.verificationResult,
+        nftReward: nftReward // Include NFT reward info
       }));
       formData.append('userId', userId);
 
@@ -162,18 +248,20 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
     }
   };
 
-  // Handle successful verification - go to token claiming
+  // Handle successful verification - go to token claiming (now includes NFT minting)
   const handleChallengeSuccess = (data: { video: Blob; photo: Blob; verificationResult?: any }) => {
     setCompletionData(data);
     setStage('claimingTokens');
   };
 
-  // Handle token claiming completion
+  // Handle token claiming completion (now includes NFT minting)
   const handleTokenClaimed = (data: { walletAddress: string; description: string; transactionId?: string; amount?: number }) => {
     // Process the final submission with wallet address and description
     console.log('Token claimed with data:', data);
+    console.log('NFT reward to be minted:', nftReward);
     
-    // Mock successful token claim
+    // TODO: Here you would mint the actual NFT using the collectionId and walletAddress
+    // For now, mock successful token claim
     const challengeToken = data.transactionId || `vhp_challenge_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     setChallengeToken(challengeToken);
     setStage('success');
@@ -186,6 +274,7 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
 
   const handleRegenerate = async () => {
     setChallenge(null); // Show loading
+    setNftReward({ status: 'generating' }); // Reset NFT state
     await fetchChallenge(true); // Pass true to indicate this is a regeneration
   };
 
@@ -224,8 +313,49 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
           
           {/* Description Text */}
           <p className="text-center text-gray-300 mb-8 text-sm px-4 font-thin">
-            Complete this challenge to verify you're human.
+            Complete this challenge to verify you're human and earn your NFT trophy.
           </p>
+
+          {/* NFT Trophy Preview */}
+          <div className="mb-6">
+            <ThematicContainer
+              asButton={false}
+              glassmorphic={true}
+              color="nocenaPink"
+              rounded="xl"
+              className="w-full px-4 py-3"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-12 h-12 flex-shrink-0">
+                  {nftReward.status === 'generating' && (
+                    <div className="w-12 h-12 border-2 border-pink-500 border-t-transparent rounded-full animate-spin" />
+                  )}
+                  {nftReward.status === 'ready' && nftReward.previewImage && (
+                    <img 
+                      src={nftReward.previewImage} 
+                      alt="NFT Trophy" 
+                      className="w-12 h-12 rounded-lg object-cover"
+                    />
+                  )}
+                  {nftReward.status === 'error' && (
+                    <div className="w-12 h-12 bg-gray-600 rounded-lg flex items-center justify-center">
+                      <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.232 15.5c-.77.833.192 2.5 1.732 2.5z" />
+                      </svg>
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-white">🏆 NFT Trophy Reward</div>
+                  <div className="text-xs text-gray-300">
+                    {nftReward.status === 'generating' && 'Generating your unique trophy...'}
+                    {nftReward.status === 'ready' && 'Ready to mint when you complete the challenge!'}
+                    {nftReward.status === 'error' && 'Trophy generation failed'}
+                  </div>
+                </div>
+              </div>
+            </ThematicContainer>
+          </div>
 
           {/* Challenge Display */}
           <ThematicContainer
@@ -301,7 +431,7 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
                 <circle cx="12" cy="17" r=".5" />
               </svg>
               <p className="text-xs text-blue-300">
-                Complete the challenge and take a verification selfie to earn your token.
+                Complete the challenge and take a verification selfie to earn your token and mint your unique NFT trophy.
                 {challengeHistory.length > 0 && " Don't like this one? Click the refresh button to get something different!"}
               </p>
             </div>
@@ -332,6 +462,7 @@ const ChallengeMode: React.FC<ChallengeModeProps> = ({
           videoBlob={completionData.video}
           photoBlob={completionData.photo}
           verificationResult={completionData.verificationResult || { overallConfidence: 0.95, passed: true }}
+          nftReward={nftReward} // Pass NFT reward data
           onClaimToken={handleTokenClaimed}
           onBack={() => setStage('completing')}
         />

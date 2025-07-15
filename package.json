@@ -21,6 +21,7 @@
     "test": "echo 'No tests yet'"
   },
   "dependencies": {
+    "@chaingpt/nft": "^0.0.9",
     "@lens-chain/sdk": "^1.0.3",
     "@lens-chain/storage-client": "^1.0.4",
     "@onflow/fcl": "^1.17.0",

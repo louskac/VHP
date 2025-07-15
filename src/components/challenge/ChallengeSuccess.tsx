@@ -5,6 +5,13 @@ import Image from 'next/image';
 import PrimaryButton from '../ui/PrimaryButton';
 import ThematicContainer from '../ui/ThematicContainer';
 
+interface NFTReward {
+  collectionId?: string;
+  previewImage?: string;
+  status: 'generating' | 'ready' | 'error';
+  prompt?: string;
+}
+
 interface Challenge {
   title: string;
   description: string;
@@ -19,6 +26,7 @@ interface ChallengeSuccessScreenProps {
   videoBlob: Blob;
   photoBlob: Blob;
   verificationResult: any;
+  nftReward: NFTReward;
   onClaimToken: (data: { walletAddress: string; description: string; transactionId?: string; amount?: number }) => void;
   onBack: () => void;
 }
@@ -28,6 +36,7 @@ const ChallengeSuccessScreen: React.FC<ChallengeSuccessScreenProps> = ({
   videoBlob,
   photoBlob,
   verificationResult,
+  nftReward,
   onClaimToken,
   onBack,
 }) => {
